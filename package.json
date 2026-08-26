@@ -1,1 +1,10 @@
+{
+  "name": "mp-checkout-vercel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Endpoint serverless para generar links de pago dinámicos de Mercado Pago desde tus landings",
+  "scripts": {
+    "dev": "vercel dev"
+  }
+}
 
