@@ -1,1 +1,97 @@
+// api/mp-webhook.js
+// Mercado Pago llama a esta URL automáticamente cada vez que cambia el
+// estado de un pago (la configurás una sola vez en tu panel de MP).
+//
+// Acá pasa lo importante:
+//  1. Recibimos el aviso (solo trae un ID, nunca hay que confiar en el
+//     contenido del aviso en sí — por seguridad, siempre volvemos a
+//     preguntarle a Mercado Pago "¿este pago realmente se aprobó?").
+//  2. Si está aprobado, sacamos el email del comprador y los links de
+//     descarga que guardamos en el metadata al crear la preferencia.
+//  3. Se lo mandamos a un webhook de Zapier (Catch Hook) — ahí armás el
+//     Zap que realmente manda el mail con el ebook/app (o lo que quieras).
+//
+// IMPORTANTE: Mercado Pago necesita una respuesta 200 rápida o reintenta
+// el envío. Por eso esta función no hace nada lento: verifica y reenvía.
+
+export default async function handler(req, res) {
+  if (req.method !== 'POST' && req.method !== 'GET') {
+    return res.status(405).send('Método no permitido');
+  }
+
+  const ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
+  const ZAPIER_URL = process.env.ZAPIER_DELIVERY_WEBHOOK_URL;
+
+  if (!ACCESS_TOKEN) {
+    console.error('Falta MP_ACCESS_TOKEN');
+    return res.status(200).send('ok'); // 200 igual, para que MP no reintente en loop
+  }
+
+  try {
+    // Mercado Pago manda el id del pago de dos formas posibles según el tipo
+    // de notificación (IPN clásico por query string, o Webhooks v2 por body).
+    const paymentId =
+      req.query?.['data.id'] ||
+      req.body?.data?.id ||
+      req.query?.id ||
+      null;
+
+    const topic = req.query?.topic || req.body?.type;
+
+    // Solo nos interesan las notificaciones de pagos (ignoramos merchant_order, etc.)
+    if (!paymentId || (topic && topic !== 'payment')) {
+      return res.status(200).send('ignored');
+    }
+
+    // Verificamos el pago REAL contra la API de Mercado Pago.
+    // Nunca confiamos en datos que vengan directo del webhook sin verificar.
+    const payRes = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+      headers: { Authorization: `Bearer ${ACCESS_TOKEN}` }
+    });
+
+    if (!payRes.ok) {
+      console.error('No se pudo verificar el pago', paymentId, payRes.status);
+      return res.status(200).send('ok');
+    }
+
+    const payment = await payRes.json();
+
+    if (payment.status !== 'approved') {
+      // pending, rejected, in_process, etc. — no entregamos nada todavía.
+      return res.status(200).send('not approved yet');
+    }
+
+    const metadata = payment.metadata || {};
+    const buyerEmail = payment.payer?.email || '';
+
+    const deliveryPayload = {
+      email: buyerEmail,
+      nombre_producto: metadata.nombre || payment.description || '',
+      download_url: metadata.download_url || '',
+      addon: metadata.addon || '',
+      addon_download_url: metadata.addon_download_url || '',
+      monto: payment.transaction_amount,
+      moneda: payment.currency_id,
+      payment_id: payment.id,
+      external_reference: payment.external_reference || ''
+    };
+
+    if (ZAPIER_URL) {
+      // No esperamos que Zapier termine de procesar — solo confirmamos que
+      // recibió el aviso, así le respondemos rápido a Mercado Pago.
+      await fetch(ZAPIER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(deliveryPayload)
+      }).catch(err => console.error('Error reenviando a Zapier:', err));
+    } else {
+      console.warn('ZAPIER_DELIVERY_WEBHOOK_URL no configurado — pago aprobado pero no se avisó a nadie:', deliveryPayload);
+    }
+
+    return res.status(200).send('ok');
+  } catch (err) {
+    console.error('Error en mp-webhook:', err);
+    return res.status(200).send('ok'); // igual 200 para evitar reintentos infinitos de MP
+  }
+}
 
