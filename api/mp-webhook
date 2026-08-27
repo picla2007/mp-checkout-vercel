@@ -8,11 +8,12 @@
 //     preguntarle a Mercado Pago "¿este pago realmente se aprobó?").
 //  2. Si está aprobado, sacamos el email del comprador y los links de
 //     descarga que guardamos en el metadata al crear la preferencia.
-//  3. Se lo mandamos a un webhook de Zapier (Catch Hook) — ahí armás el
-//     Zap que realmente manda el mail con el ebook/app (o lo que quieras).
+//  3. Le mandamos el email de entrega DIRECTO con Resend (sin pasar por
+//     Zapier — así no depende de un plan pago ni de que un Zap esté
+//     publicado).
 //
 // IMPORTANTE: Mercado Pago necesita una respuesta 200 rápida o reintenta
-// el envío. Por eso esta función no hace nada lento: verifica y reenvía.
+// el envío. Por eso esta función no hace nada lento: verifica y manda.
 
 export default async function handler(req, res) {
   if (req.method !== 'POST' && req.method !== 'GET') {
@@ -20,7 +21,8 @@ export default async function handler(req, res) {
   }
 
   const ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
-  const ZAPIER_URL = process.env.ZAPIER_DELIVERY_WEBHOOK_URL;
+  const RESEND_API_KEY = process.env.RESEND_API_KEY;
+  const RESEND_FROM = process.env.RESEND_FROM || 'onboarding@resend.dev';
 
   if (!ACCESS_TOKEN) {
     console.error('Falta MP_ACCESS_TOKEN');
@@ -63,29 +65,45 @@ export default async function handler(req, res) {
 
     const metadata = payment.metadata || {};
     const buyerEmail = payment.payer?.email || '';
+    const nombreProducto = metadata.nombre || payment.description || 'tu producto';
 
-    const deliveryPayload = {
-      email: buyerEmail,
-      nombre_producto: metadata.nombre || payment.description || '',
-      download_url: metadata.download_url || '',
-      addon: metadata.addon || '',
-      addon_download_url: metadata.addon_download_url || '',
-      monto: payment.transaction_amount,
-      moneda: payment.currency_id,
-      payment_id: payment.id,
-      external_reference: payment.external_reference || ''
-    };
+    if (buyerEmail && RESEND_API_KEY) {
+      const bumpBlock = metadata.addon && metadata.addon_download_url ? `
+        <p>También incluye tu bonus:</p>
+        <p><a href="${metadata.addon_download_url}">${metadata.addon_download_url}</a></p>
+      ` : '';
 
-    if (ZAPIER_URL) {
-      // No esperamos que Zapier termine de procesar — solo confirmamos que
-      // recibió el aviso, así le respondemos rápido a Mercado Pago.
-      await fetch(ZAPIER_URL, {
+      const html = `
+        <p>¡Hola!</p>
+        <p>Gracias por tu compra. Acá tenés el acceso a ${nombreProducto}:</p>
+        <p><a href="${metadata.download_url || '#'}">${metadata.download_url || ''}</a></p>
+        ${bumpBlock}
+        <p>Cualquier duda, respondé este mismo mail.</p>
+        <p>¡Saludos!</p>
+      `;
+
+      const emailRes = await fetch('https://api.resend.com/emails', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(deliveryPayload)
-      }).catch(err => console.error('Error reenviando a Zapier:', err));
+        headers: {
+          Authorization: `Bearer ${RESEND_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: RESEND_FROM,
+          to: buyerEmail,
+          subject: `Tu acceso a ${nombreProducto} ya está listo 🎉`,
+          html
+        })
+      });
+
+      if (!emailRes.ok) {
+        const errBody = await emailRes.text();
+        console.error('Error mandando el email de entrega:', emailRes.status, errBody);
+      }
     } else {
-      console.warn('ZAPIER_DELIVERY_WEBHOOK_URL no configurado — pago aprobado pero no se avisó a nadie:', deliveryPayload);
+      console.warn('Falta RESEND_API_KEY o el email del comprador — pago aprobado pero no se entregó nada:', {
+        buyerEmail, nombreProducto, metadata
+      });
     }
 
     return res.status(200).send('ok');
@@ -94,4 +112,3 @@ export default async function handler(req, res) {
     return res.status(200).send('ok'); // igual 200 para evitar reintentos infinitos de MP
   }
 }
-
