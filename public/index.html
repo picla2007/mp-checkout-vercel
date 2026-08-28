@@ -57,7 +57,7 @@ export default async function handler(req, res) {
   }
 
   const ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
-  const ZAPIER_URL = process.env.RESEND_DELIVERY_WEBHOOK_URL;
+  const RESEND_URL = process.env.RESEND_DELIVERY_WEBHOOK_URL;
 
   if (!ACCESS_TOKEN) {
     console.error('Falta MP_ACCESS_TOKEN');
