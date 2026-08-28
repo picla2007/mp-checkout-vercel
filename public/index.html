@@ -116,7 +116,7 @@ export default async function handler(req, res) {
     if (ZAPIER_URL) {
       // No esperamos que Zapier termine de procesar — solo confirmamos que
       // recibió el aviso, así le respondemos rápido a Mercado Pago.
-      await fetch(ZAPIER_URL, {
+      await fetch(RESEND_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(deliveryPayload)
