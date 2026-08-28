@@ -1,4 +1,3 @@
-
 // api/create-preference.js
 // Función serverless (Vercel) que usa la página de checkout DeliveryFlow (index.html)
 // para crear una preferencia de pago en Mercado Pago con el total correcto
@@ -63,6 +62,7 @@ export default async function handler(req, res) {
       payer: { email },
       metadata,
       external_reference: `df_${Date.now()}`,
+      notification_url: 'https://mp-checkout-vercel.vercel.app/api/mp-webhook',
       ...(origin
         ? { back_urls: { success: origin, failure: origin, pending: origin }, auto_return: 'approved' }
         : {})
