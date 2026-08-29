@@ -67,19 +67,31 @@ export default async function handler(req, res) {
     const buyerEmail = payment.payer?.email || '';
     const nombreProducto = metadata.nombre || payment.description || 'tu producto';
 
-    if (buyerEmail && RESEND_API_KEY) {
+    // MODO MANUAL (temporal, hasta verificar un dominio propio en Resend):
+    // Resend, sin dominio verificado, solo deja mandar mails a la casilla
+    // dueña de la cuenta. Por eso, en vez de mandarle el mail directo al
+    // comprador, te avisamos A VOS con todos los datos para que se lo
+    // reenvíes a mano. El día que verifiques tu dominio, cambiá
+    // SELLER_NOTIFY_EMAIL por buyerEmail en el "to" de abajo y listo,
+    // vuelve a ser 100% automático.
+    const SELLER_NOTIFY_EMAIL = process.env.SELLER_NOTIFY_EMAIL || 'joselotobias@gmail.com';
+
+    if (RESEND_API_KEY) {
       const bumpBlock = metadata.addon && metadata.addon_download_url ? `
-        <p>También incluye tu bonus:</p>
-        <p><a href="${metadata.addon_download_url}">${metadata.addon_download_url}</a></p>
+        <p><strong>Addon comprado:</strong> ${metadata.addon}</p>
+        <p><strong>Link del addon:</strong> <a href="${metadata.addon_download_url}">${metadata.addon_download_url}</a></p>
       ` : '';
 
       const html = `
-        <p>¡Hola!</p>
-        <p>Gracias por tu compra. Acá tenés el acceso a ${nombreProducto}:</p>
-        <p><a href="${metadata.download_url || '#'}">${metadata.download_url || ''}</a></p>
+        <p>🎉 Nueva venta aprobada — entregala a mano por ahora:</p>
+        <p><strong>Comprador:</strong> ${buyerEmail || '(sin email registrado)'}</p>
+        <p><strong>Producto:</strong> ${nombreProducto}</p>
+        <p><strong>Link de descarga:</strong> <a href="${metadata.download_url || '#'}">${metadata.download_url || ''}</a></p>
         ${bumpBlock}
-        <p>Cualquier duda, respondé este mismo mail.</p>
-        <p>¡Saludos!</p>
+        <p><strong>Monto:</strong> $${payment.transaction_amount} ${payment.currency_id}</p>
+        <p><strong>ID de pago:</strong> ${payment.id}</p>
+        <hr>
+        <p style="color:#888;font-size:12px;">Este mail te llega a vos (no al comprador) porque todavía no verificaste un dominio propio en Resend. Reenviale al comprador el link de descarga de arriba.</p>
       `;
 
       const emailRes = await fetch('https://api.resend.com/emails', {
@@ -90,18 +102,18 @@ export default async function handler(req, res) {
         },
         body: JSON.stringify({
           from: RESEND_FROM,
-          to: buyerEmail,
-          subject: `Tu acceso a ${nombreProducto} ya está listo 🎉`,
+          to: SELLER_NOTIFY_EMAIL,
+          subject: `🎉 Nueva venta: ${nombreProducto} — entregar a ${buyerEmail}`,
           html
         })
       });
 
       if (!emailRes.ok) {
         const errBody = await emailRes.text();
-        console.error('Error mandando el email de entrega:', emailRes.status, errBody);
+        console.error('Error mandando el email de aviso de venta:', emailRes.status, errBody);
       }
     } else {
-      console.warn('Falta RESEND_API_KEY o el email del comprador — pago aprobado pero no se entregó nada:', {
+      console.warn('Falta RESEND_API_KEY — pago aprobado pero no se avisó a nadie:', {
         buyerEmail, nombreProducto, metadata
       });
     }
