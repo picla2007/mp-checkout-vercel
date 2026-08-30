@@ -64,7 +64,14 @@ export default async function handler(req, res) {
       external_reference: `df_${Date.now()}`,
       notification_url: 'https://mp-checkout-vercel.vercel.app/api/mp-webhook',
       ...(origin
-        ? { back_urls: { success: origin, failure: origin, pending: origin }, auto_return: 'approved' }
+        ? {
+            back_urls: {
+              success: `${origin}/success.html`,
+              failure: origin,
+              pending: `${origin}/success.html`
+            },
+            auto_return: 'approved'
+          }
         : {})
     };
 
