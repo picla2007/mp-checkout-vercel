@@ -41,7 +41,20 @@ export default async function handler(req, res) {
     }
 
     const title = addon ? `${nombre} + ${addon}` : (nombre || 'Producto digital');
-    const origin = req.headers.origin || req.headers.referer || undefined;
+
+    // Sacamos el origin de los headers, pero si no es una URL http(s) válida
+    // (ej: viene de un archivo local abierto con file://, o directamente
+    // no vino), usamos el dominio del propio checkout como respaldo.
+    // Sin esto, Mercado Pago rechaza la preferencia con "back_urls invalid".
+    const FALLBACK_ORIGIN = 'https://mp-checkout-vercel.vercel.app';
+    const rawOrigin = req.headers.origin || req.headers.referer || '';
+    let origin;
+    try {
+      const u = new URL(rawOrigin);
+      origin = (u.protocol === 'http:' || u.protocol === 'https:') ? u.origin : FALLBACK_ORIGIN;
+    } catch {
+      origin = FALLBACK_ORIGIN;
+    }
 
     // Guardamos todo lo necesario para la entrega en "metadata".
     // Mercado Pago nos lo devuelve intacto cuando consultamos el pago después.
