@@ -28,7 +28,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { items, payer_email, external_reference } = req.body || {};
+    const { items, payer_email, external_reference, download_url, addon, addon_download_url } = req.body || {};
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'Faltan items para armar el pago' });
@@ -48,18 +48,38 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Los items recibidos no son válidos' });
     }
 
-    const origin = req.headers.origin || req.headers.referer || undefined;
+    // Igual que en create-preference.js: si el origin no es una URL http(s)
+    // válida, usamos el dominio del checkout como respaldo para que MP
+    // nunca rechace la preferencia por "back_urls invalid".
+    const FALLBACK_ORIGIN = 'https://mp-checkout-vercel.vercel.app';
+    const rawOrigin = req.headers.origin || req.headers.referer || '';
+    let origin;
+    try {
+      const u = new URL(rawOrigin);
+      origin = (u.protocol === 'http:' || u.protocol === 'https:') ? u.origin : FALLBACK_ORIGIN;
+    } catch {
+      origin = FALLBACK_ORIGIN;
+    }
 
     const preferenceBody = {
       items: cleanItems,
       external_reference: external_reference || `landing_${Date.now()}`,
       ...(payer_email ? { payer: { email: payer_email } } : {}),
-      ...(origin
-        ? {
-            back_urls: { success: origin, failure: origin, pending: origin },
-            auto_return: 'approved'
-          }
-        : {})
+      // Guardamos el link de descarga en metadata: así success.html y
+      // mp-webhook.js pueden entregarlo automáticamente, igual que en
+      // create-preference.js.
+      metadata: {
+        nombre: cleanItems[0]?.title || '',
+        download_url: download_url || '',
+        addon: addon || '',
+        addon_download_url: addon_download_url || ''
+      },
+      back_urls: {
+        success: `${origin}/success.html`,
+        failure: origin,
+        pending: `${origin}/success.html`
+      },
+      auto_return: 'approved'
     };
 
     const mpRes = await fetch('https://api.mercadopago.com/checkout/preferences', {
@@ -85,4 +105,3 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message || 'Error interno del servidor' });
   }
 }
-
