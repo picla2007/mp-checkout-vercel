@@ -1,368 +1,63 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Checkout</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+// api/paypal-create-order.js
+// Lo llama el botón de PayPal del checkout (index.html) al arrancar el pago.
+// Crea la orden en PayPal con el monto en USD, y guarda el link de
+// descarga empaquetado en custom_id para poder entregarlo apenas se
+// confirme el pago (igual que hacemos con metadata en Mercado Pago).
 
-  <!--
-  ═══════════════════════════════════════════════════════
-  DELIVERYFLOW CHECKOUT — PARÁMETROS POR URL:
+import { getPaypalAccessToken, paypalApiBase, packCustomId } from '../lib/paypal.js';
 
-  Solo producto base:
-  /?nombre=DeliveryFlow Pro&precio=285000&moneda=ARS
+export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  Con addon / order bump:
-  /?nombre=DeliveryFlow Pro&precio=285000&addon=Pack Templates&addon_precio=49000&addon_desc=10 templates premium
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Método no permitido' });
 
-  Con colores personalizados (RGB):
-  /?nombre=TradingMaster&precio=97&moneda=USD&accent=16,185,129&accent2=99,102,241
+  try {
+    const { nombre, precio_total, download_url, addon, addon_download_url } = req.body || {};
 
-  Con garantía:
-  /?nombre=MiProducto&precio=150000&garantia=60
-
-  Con features custom (separadas por |):
-  /?features=Acceso vitalicio|Soporte 24/7|Actualizaciones gratis|Comunidad privada
-  ═══════════════════════════════════════════════════════
-  -->
-
-  <script>
-  (function() {
-    var p = new URLSearchParams(window.location.search);
-
-    window.DF = {
-      nombre:       p.get('nombre')       || 'DeliveryFlow Pro',
-      precio:       p.get('precio')       || '285000',
-      moneda:       p.get('moneda')       || 'ARS',
-      periodo:      p.get('periodo')      || 'único',
-      desc:         p.get('desc')         || 'Comprá una vez, accedé para siempre. Después de tu pago recibís el acceso por email al instante.',
-      badge:        p.get('badge')        || 'Pago único · Acceso inmediato',
-      cta:          p.get('cta')          || 'Comprar con MercadoPago',
-      garantia:     p.get('garantia')     || '',
-      features:     p.get('features')     || 'Acceso completo|Actualizaciones incluidas|Soporte por email|Entrega automática inmediata',
-      addon:        p.get('addon')        || '',
-      addon_precio: p.get('addon_precio') || '0',
-      addon_desc:   p.get('addon_desc')   || '',
-      addon_img:    p.get('addon_img')    || '',
-      download:         p.get('download')         || '',
-      addon_download:   p.get('addon_download')   || '',
-      accent:       p.get('accent')       || '124,92,252',
-      accent2:      p.get('accent2')      || '0,229,160',
-    };
-
-    function fmt(n) {
-      var num = parseInt((n+'').replace(/\D/g,'')) || 0;
-      return num.toLocaleString('es-AR');
+    const amount = Number(precio_total);
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Falta un precio_total válido' });
+    }
+    if (!download_url) {
+      return res.status(400).json({ error: 'Falta download_url' });
     }
 
-    window.DF.precioNum      = parseInt((window.DF.precio+'').replace(/\D/g,'')) || 0;
-    window.DF.addonPrecioNum = parseInt((window.DF.addon_precio+'').replace(/\D/g,'')) || 0;
-    window.DF.precioFmt      = fmt(window.DF.precio);
-    window.DF.addonPrecioFmt = fmt(window.DF.addon_precio);
-    window.DF.totalFmt       = fmt(window.DF.precioNum + window.DF.addonPrecioNum);
-    window.DF.featuresArr    = window.DF.features.split('|').filter(Boolean);
+    const accessToken = await getPaypalAccessToken();
 
-    document.addEventListener('DOMContentLoaded', function() {
-      var r = document.documentElement;
-      r.style.setProperty('--ac', window.DF.accent);
-      r.style.setProperty('--ac2', window.DF.accent2);
-
-      document.title = window.DF.nombre + ' — Checkout';
-
-      // Textos simples
-      document.querySelectorAll('[data-df]').forEach(function(el) {
-        var k = el.dataset.df;
-        if (window.DF[k] !== undefined) el.textContent = window.DF[k];
-      });
-
-      // Precio inicial
-      var dp = document.getElementById('display-precio');
-      if (dp) dp.textContent = window.DF.precioFmt;
-
-      // Features
-      var fl = document.getElementById('features-list');
-      if (fl) fl.innerHTML = window.DF.featuresArr.map(function(f) {
-        return '<li>' + f + '</li>';
-      }).join('');
-
-      // Addon
-      var addonSec = document.getElementById('addon-section');
-      if (addonSec) {
-        addonSec.style.display = window.DF.addon ? 'block' : 'none';
-        var img = document.getElementById('addon-img');
-        if (img) {
-          if (window.DF.addon_img) { img.src = window.DF.addon_img; img.style.display = 'block'; }
-          else img.style.display = 'none';
-        }
-      }
-
-      // Garantía
-      var gb = document.getElementById('garantia-box');
-      if (gb) gb.style.display = window.DF.garantia ? 'flex' : 'none';
-    });
-  })();
-  </script>
-
-  <style>
-    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-    :root{
-      --ac:124,92,252;
-      --ac2:0,229,160;
-      --bg:#0a0a0f;
-      --surface:rgba(255,255,255,0.03);
-      --border:rgba(255,255,255,0.07);
-      --border-b:rgba(255,255,255,0.13);
-      --text:#f0eff6;
-      --muted:rgba(240,239,246,0.45);
-      --r:14px;
-    }
-    html{scroll-behavior:smooth}
-    body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;-webkit-font-smoothing:antialiased}
-    .bg-grid{position:fixed;inset:0;z-index:0;background-image:linear-gradient(rgba(var(--ac),.05) 1px,transparent 1px),linear-gradient(90deg,rgba(var(--ac),.05) 1px,transparent 1px);background-size:48px 48px;pointer-events:none}
-    .bg-glow{position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:700px;height:700px;background:radial-gradient(circle,rgba(var(--ac),.15) 0%,transparent 70%);z-index:0;pointer-events:none}
-    nav{position:relative;z-index:10;display:flex;justify-content:space-between;align-items:center;padding:22px 48px;border-bottom:1px solid var(--border);backdrop-filter:blur(8px)}
-    .logo{font-family:'Syne',sans-serif;font-weight:800;font-size:1.2rem;letter-spacing:-0.03em}
-    .logo span{color:rgb(var(--ac))}
-    .nav-badge{font-size:.75rem;font-weight:500;background:rgba(var(--ac),.15);color:rgb(var(--ac));border:1px solid rgba(var(--ac),.3);padding:4px 12px;border-radius:100px}
-    .page{position:relative;z-index:1;max-width:500px;margin:0 auto;padding:60px 24px 80px}
-    .hero-tag{display:inline-flex;align-items:center;gap:8px;font-size:.78rem;color:rgb(var(--ac2));letter-spacing:.1em;text-transform:uppercase;margin-bottom:18px}
-    .hero-tag::before{content:'';width:6px;height:6px;background:rgb(var(--ac2));border-radius:50%;animation:pulse 2s infinite}
-    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-    h1{font-family:'Syne',sans-serif;font-weight:800;font-size:clamp(1.8rem,5vw,2.6rem);line-height:1.08;letter-spacing:-0.04em;margin-bottom:14px}
-    h1 em{font-style:normal;color:rgb(var(--ac))}
-    .hero-sub{font-size:.95rem;color:var(--muted);line-height:1.7;margin-bottom:32px;font-weight:300}
-    .buy-box{background:var(--surface);border:1px solid var(--border-b);border-radius:20px;padding:30px;position:relative;overflow:hidden;animation:fadeUp .5s .3s ease both}
-    .buy-box::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgb(var(--ac)),transparent)}
-    @keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-    .price-block{text-align:center;margin-bottom:22px}
-    .price-label{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
-    .price-row{display:flex;align-items:baseline;justify-content:center;gap:6px}
-    .price{font-family:'Syne',sans-serif;font-size:3rem;font-weight:800;letter-spacing:-0.04em;line-height:1;transition:all 0.3s}
-    .price-currency{font-size:1.2rem;font-weight:600;color:var(--muted)}
-    .price-moneda{font-size:.85rem;color:var(--muted);align-self:flex-end;margin-bottom:4px}
-    .price-period{font-size:.8rem;color:var(--muted);margin-top:5px}
-    .divider{height:1px;background:var(--border);margin:18px 0}
-    #features-list{list-style:none;display:flex;flex-direction:column;gap:9px;margin-bottom:18px}
-    #features-list li{display:flex;align-items:center;gap:10px;font-size:.88rem;color:rgba(240,239,246,.75);font-weight:300}
-    #features-list li::before{content:'✓';color:rgb(var(--ac2));font-weight:700;font-size:.78rem;background:rgba(var(--ac2),.1);border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-    /* ORDER BUMP */
-    #addon-section{display:none;margin-bottom:18px}
-    .addon-bump{background:rgba(var(--ac2),0.04);border:2px dashed rgba(var(--ac2),0.3);border-radius:14px;padding:14px;cursor:pointer;transition:all 0.2s}
-    .addon-bump:hover{background:rgba(var(--ac2),0.07)}
-    .addon-bump.active{border-style:solid;border-color:rgb(var(--ac2));background:rgba(var(--ac2),0.07)}
-    .addon-label{display:flex;align-items:flex-start;gap:10px;cursor:pointer;user-select:none}
-    .addon-label input{display:none}
-    .addon-cb{width:22px;height:22px;border-radius:6px;border:2px solid rgba(var(--ac2),0.4);background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.2s;margin-top:2px}
-    .addon-bump.active .addon-cb{background:rgb(var(--ac2));border-color:rgb(var(--ac2))}
-    .cb-icon{display:none}
-    .addon-bump.active .cb-icon{display:block}
-    .addon-body{display:flex;align-items:center;gap:10px;flex:1}
-    #addon-img{width:56px;height:56px;border-radius:10px;object-fit:cover;border:1px solid var(--border);flex-shrink:0}
-    .addon-info{flex:1}
-    .addon-tag{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:rgb(var(--ac2));font-weight:600;margin-bottom:3px}
-    .addon-nombre{font-family:'Syne',sans-serif;font-weight:700;font-size:13px;color:var(--text);margin-bottom:3px}
-    .addon-desc{font-size:11px;color:var(--muted);font-weight:300;line-height:1.4}
-    .addon-precio{font-family:'Syne',sans-serif;font-weight:800;font-size:17px;color:rgb(var(--ac2));white-space:nowrap;flex-shrink:0}
-    .total-row{display:none;justify-content:space-between;align-items:center;padding:10px 14px;background:rgba(var(--ac2),0.06);border:1px solid rgba(var(--ac2),0.2);border-radius:10px;font-size:13px;color:var(--muted);margin-top:10px}
-    .total-row.show{display:flex}
-    #total-precio{font-family:'Syne',sans-serif;font-weight:700;font-size:17px;color:rgb(var(--ac2))}
-    /* FORM */
-    .form-group{display:flex;flex-direction:column;gap:10px;margin-top:18px}
-    .input-field{width:100%;padding:13px 16px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-family:'DM Sans',sans-serif;font-size:.9rem;transition:border-color .2s;outline:none}
-    .input-field:focus{border-color:rgb(var(--ac))}
-    .input-field::placeholder{color:var(--muted)}
-    .btn-buy{width:100%;padding:15px;background:rgb(var(--ac));color:#fff;border:none;border-radius:var(--r);font-family:'Syne',sans-serif;font-weight:700;font-size:1rem;letter-spacing:.02em;cursor:pointer;transition:transform .15s,box-shadow .15s,opacity .15s;box-shadow:0 0 28px rgba(var(--ac),.35);display:flex;align-items:center;justify-content:center;gap:8px}
-    .btn-buy:hover{transform:translateY(-2px);box-shadow:0 4px 36px rgba(var(--ac),.5)}
-    .btn-buy:active{transform:translateY(0)}
-    .btn-buy:disabled{opacity:.5;cursor:not-allowed;transform:none}
-    .spinner{display:none;width:18px;height:18px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
-    @keyframes spin{to{transform:rotate(360deg)}}
-    #garantia-box{display:none;align-items:center;gap:10px;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.2);border-radius:10px;padding:12px 14px;margin-top:12px;font-size:12px;color:rgba(240,239,246,.6);font-weight:300;line-height:1.5}
-    .error-msg{display:none;margin-top:10px;padding:10px 14px;background:rgba(255,80,80,.08);border:1px solid rgba(255,80,80,.2);border-radius:8px;color:#ff8080;font-size:.85rem}
-    .secure-note{margin-top:12px;text-align:center;font-size:.76rem;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:6px}
-    footer{position:relative;z-index:1;text-align:center;padding:28px;color:var(--muted);font-size:.76rem;border-top:1px solid var(--border)}
-    @media(max-width:600px){nav{padding:16px 18px}.page{padding:40px 14px 60px}.buy-box{padding:22px 16px}}
-  </style>
-</head>
-<body>
-  <div class="bg-grid"></div>
-  <div class="bg-glow"></div>
-
-  <nav>
-    <div class="logo" data-df="nombre">DeliveryFlow Pro</div>
-    <span class="nav-badge" data-df="badge">Pago único · Acceso inmediato</span>
-  </nav>
-
-  <div class="page">
-    <div class="hero-tag">Entrega automática inmediata después del pago</div>
-    <h1>Acceso a<br><em data-df="nombre">DeliveryFlow Pro</em></h1>
-    <p class="hero-sub" data-df="desc"></p>
-
-    <div class="buy-box">
-
-      <!-- PRECIO -->
-      <div class="price-block">
-        <div class="price-label">Total a pagar</div>
-        <div class="price-row">
-          <span class="price-currency">$</span>
-          <span class="price" id="display-precio">285.000</span>
-          <span class="price-moneda" data-df="moneda">ARS</span>
-        </div>
-        <div class="price-period">Pago <span data-df="periodo">único</span> — sin suscripción</div>
-      </div>
-
-      <div class="divider"></div>
-
-      <!-- FEATURES -->
-      <ul id="features-list"></ul>
-
-      <div class="divider"></div>
-
-      <!-- ORDER BUMP -->
-      <div id="addon-section">
-        <div class="addon-bump" id="addon-bump" onclick="toggleAddon(event)">
-          <label class="addon-label">
-            <input type="checkbox" id="addon-check">
-            <div class="addon-cb">
-              <svg class="cb-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path d="M2 6l3 3 5-5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </div>
-            <div class="addon-body">
-              <img id="addon-img" src="" alt="">
-              <div class="addon-info">
-                <div class="addon-tag">⚡ Agregar al pedido — Oferta única</div>
-                <div class="addon-nombre" data-df="addon">Pack Premium</div>
-                <div class="addon-desc" data-df="addon_desc"></div>
-              </div>
-              <div class="addon-precio">+$<span data-df="addonPrecioFmt">0</span></div>
-            </div>
-          </label>
-        </div>
-        <div class="total-row" id="total-row">
-          <span>Total con addon:</span>
-          <span id="total-precio"></span>
-        </div>
-      </div>
-
-      <!-- GARANTIA -->
-      <div id="garantia-box">
-        <span style="font-size:20px">🛡️</span>
-        <span><strong style="color:#4ade80" data-df="garantia"></strong> días de garantía — si no estás conforme te devolvemos el dinero.</span>
-      </div>
-
-      <!-- FORM -->
-      <div class="form-group">
-        <input type="email" id="buyer-email" class="input-field"
-          placeholder="tu@email.com — te enviamos el acceso aquí" required/>
-        <button class="btn-buy" id="btn-pay" onclick="iniciarPago()">
-          <span id="btn-text" data-df="cta">Comprar con MercadoPago</span>
-          <span class="spinner" id="btn-spinner"></span>
-        </button>
-      </div>
-
-      <div class="error-msg" id="error-msg"></div>
-
-      <p class="secure-note">🔒 Pago 100% seguro procesado por MercadoPago</p>
-    </div>
-  </div>
-
-  <footer>© 2026 <span data-df="nombre">DeliveryFlow Pro</span> · Todos los derechos reservados</footer>
-
-  <script>
-    var addonActivo = false;
-
-    function toggleAddon(e) {
-      if (e) e.stopPropagation();
-      addonActivo = !addonActivo;
-      var bump     = document.getElementById('addon-bump');
-      var check    = document.getElementById('addon-check');
-      var totalRow = document.getElementById('total-row');
-      var totalPrecio = document.getElementById('total-precio');
-      var displayPrecio = document.getElementById('display-precio');
-
-      bump.classList.toggle('active', addonActivo);
-      check.checked = addonActivo;
-
-      if (addonActivo) {
-        totalRow.classList.add('show');
-        if (totalPrecio) totalPrecio.textContent = '$' + window.DF.totalFmt;
-        if (displayPrecio) displayPrecio.textContent = window.DF.totalFmt;
-      } else {
-        totalRow.classList.remove('show');
-        if (displayPrecio) displayPrecio.textContent = window.DF.precioFmt;
-      }
-    }
-
-    // Click en cualquier parte del bump lo activa
-    document.addEventListener('DOMContentLoaded', function() {
-      var bump = document.getElementById('addon-bump');
-      if (bump) {
-        bump.addEventListener('click', function(e) {
-          if (e.target.tagName !== 'INPUT') toggleAddon(e);
-        });
-      }
-      var emailInput = document.getElementById('buyer-email');
-      if (emailInput) {
-        emailInput.addEventListener('keydown', function(e) {
-          if (e.key === 'Enter') iniciarPago();
-        });
-      }
+    const orderRes = await fetch(`${paypalApiBase()}/v2/checkout/orders`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        intent: 'CAPTURE',
+        purchase_units: [
+          {
+            description: (nombre || 'Producto digital').slice(0, 127),
+            custom_id: packCustomId({ nombre, download_url, addon, addon_download_url }),
+            amount: {
+              currency_code: 'USD',
+              value: amount.toFixed(2)
+            }
+          }
+        ]
+      })
     });
 
-    async function iniciarPago() {
-      var email   = document.getElementById('buyer-email').value.trim();
-      var errorEl = document.getElementById('error-msg');
-      var btn     = document.getElementById('btn-pay');
-      var btnText = document.getElementById('btn-text');
-      var spinner = document.getElementById('btn-spinner');
+    const order = await orderRes.json();
 
-      errorEl.style.display = 'none';
-
-      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        errorEl.textContent = 'Por favor ingresá un email válido.';
-        errorEl.style.display = 'block';
-        return;
-      }
-
-      btn.disabled = true;
-      btnText.textContent = 'Redirigiendo a MercadoPago...';
-      spinner.style.display = 'block';
-
-      var payload = {
-        email:        email,
-        nombre:       window.DF.nombre,
-        moneda:       window.DF.moneda,
-        precio_total: addonActivo
-          ? window.DF.precioNum + window.DF.addonPrecioNum
-          : window.DF.precioNum,
-        addon: addonActivo ? window.DF.addon : '',
-        download_url: window.DF.download,
-        addon_download_url: addonActivo ? window.DF.addon_download : '',
-      };
-
-      try {
-        var res  = await fetch('/api/create-preference', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify(payload)
-        });
-        var data = await res.json();
-        if (data.url) {
-          window.location.href = data.url;
-        } else {
-          throw new Error(data.error || 'Error inesperado');
-        }
-      } catch (err) {
-        errorEl.textContent = 'No se pudo conectar con MercadoPago. Intentá de nuevo.';
-        errorEl.style.display = 'block';
-        btn.disabled = false;
-        btnText.textContent = window.DF.cta;
-        spinner.style.display = 'none';
-      }
+    if (!orderRes.ok) {
+      console.error('Error creando orden PayPal:', order);
+      return res.status(502).json({ error: order.message || 'Error creando la orden en PayPal' });
     }
-  </script>
-</body>
-</html>
+
+    return res.status(200).json({ id: order.id });
+  } catch (err) {
+    console.error('Error en paypal-create-order:', err);
+    return res.status(500).json({ error: err.message || 'Error interno del servidor' });
+  }
+}
